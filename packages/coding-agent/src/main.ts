@@ -171,12 +171,35 @@ function getChangelogForDisplay(parsed: Args, settingsManager: SettingsManager):
 	return undefined;
 }
 
+/**
+ * Resolve a session argument to a file path.
+ * If it looks like a path, use as-is. Otherwise try to match as session ID prefix.
+ */
+function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): string {
+	// If it looks like a file path, use as-is
+	if (sessionArg.includes("/") || sessionArg.includes("\\") || sessionArg.endsWith(".jsonl")) {
+		return sessionArg;
+	}
+
+	// Try to match as session ID (full or partial UUID)
+	const sessions = SessionManager.list(cwd, sessionDir);
+	const matches = sessions.filter((s) => s.id.startsWith(sessionArg));
+
+	if (matches.length >= 1) {
+		return matches[0].path; // Already sorted by modified time (most recent first)
+	}
+
+	// No match - return original (will create new session)
+	return sessionArg;
+}
+
 function createSessionManager(parsed: Args, cwd: string): SessionManager | undefined {
 	if (parsed.noSession) {
 		return SessionManager.inMemory();
 	}
 	if (parsed.session) {
-		return SessionManager.open(parsed.session, parsed.sessionDir);
+		const resolvedPath = resolveSessionPath(parsed.session, cwd, parsed.sessionDir);
+		return SessionManager.open(resolvedPath, parsed.sessionDir);
 	}
 	if (parsed.continue) {
 		return SessionManager.continueRecent(cwd, parsed.sessionDir);
@@ -212,6 +235,7 @@ function buildSessionOptions(
 	scopedModels: ScopedModel[],
 	sessionManager: SessionManager | undefined,
 	modelRegistry: ModelRegistry,
+	settingsManager: SettingsManager,
 	preloadedExtensions?: LoadedExtension[],
 ): CreateAgentSessionOptions {
 	const options: CreateAgentSessionOptions = {};
@@ -238,15 +262,21 @@ function buildSessionOptions(
 	}
 
 	// Thinking level
+	// Only use scoped model's thinking level if it was explicitly specified (e.g., "model:high")
+	// Otherwise, let the SDK use defaultThinkingLevel from settings
 	if (parsed.thinking) {
 		options.thinkingLevel = parsed.thinking;
-	} else if (scopedModels.length > 0 && !parsed.continue && !parsed.resume) {
+	} else if (scopedModels.length > 0 && scopedModels[0].thinkingLevel && !parsed.continue && !parsed.resume) {
 		options.thinkingLevel = scopedModels[0].thinkingLevel;
 	}
 
-	// Scoped models for Ctrl+P cycling
+	// Scoped models for Ctrl+P cycling - fill in default thinking level for models without explicit level
 	if (scopedModels.length > 0) {
-		options.scopedModels = scopedModels;
+		const defaultThinkingLevel = settingsManager.getDefaultThinkingLevel() ?? "off";
+		options.scopedModels = scopedModels.map((sm) => ({
+			model: sm.model,
+			thinkingLevel: sm.thinkingLevel ?? defaultThinkingLevel,
+		}));
 	}
 
 	// API key from CLI - set in authStorage
@@ -345,7 +375,7 @@ export async function main(args: string[]) {
 	if (parsed.export) {
 		try {
 			const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
-			const result = exportFromFile(parsed.export, outputPath);
+			const result = await exportFromFile(parsed.export, outputPath);
 			console.log(`Exported to: ${result}`);
 			return;
 		} catch (error: unknown) {
@@ -400,7 +430,14 @@ export async function main(args: string[]) {
 		sessionManager = SessionManager.open(selectedPath);
 	}
 
-	const sessionOptions = buildSessionOptions(parsed, scopedModels, sessionManager, modelRegistry, loadedExtensions);
+	const sessionOptions = buildSessionOptions(
+		parsed,
+		scopedModels,
+		sessionManager,
+		modelRegistry,
+		settingsManager,
+		loadedExtensions,
+	);
 	sessionOptions.authStorage = authStorage;
 	sessionOptions.modelRegistry = modelRegistry;
 	sessionOptions.eventBus = eventBus;
@@ -448,7 +485,7 @@ export async function main(args: string[]) {
 		if (scopedModels.length > 0) {
 			const modelList = scopedModels
 				.map((sm) => {
-					const thinkingStr = sm.thinkingLevel !== "off" ? `:${sm.thinkingLevel}` : "";
+					const thinkingStr = sm.thinkingLevel ? `:${sm.thinkingLevel}` : "";
 					return `${sm.model.id}${thinkingStr}`;
 				})
 				.join(", ");
