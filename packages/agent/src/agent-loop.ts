@@ -98,6 +98,119 @@ function createAgentStream(): EventStream<AgentEvent, AgentMessage[]> {
 	);
 }
 
+const CONTEXT_WARN_BYTES = 2_000_000;
+const CONTEXT_WARN_TOKEN_FRACTION = 0.85;
+
+type ContextSizeEstimate = {
+	approxTokens: number;
+	approxChars: number;
+	approxBytes: number;
+	messageCount: number;
+	toolCount: number;
+};
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes}B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
+}
+
+function estimateContextSize(context: Context): ContextSizeEstimate {
+	const totals = { chars: 0, bytes: 0 };
+
+	const addText = (text: string | undefined): void => {
+		if (!text) return;
+		totals.chars += text.length;
+		totals.bytes += Buffer.byteLength(text, "utf8");
+	};
+
+	const addJson = (value: unknown): void => {
+		if (value === undefined) return;
+		try {
+			const serialized = JSON.stringify(value);
+			if (serialized) addText(serialized);
+		} catch {
+			// Ignore JSON serialization failures; size estimate remains approximate.
+		}
+	};
+
+	addText(context.systemPrompt);
+
+	for (const msg of context.messages) {
+		switch (msg.role) {
+			case "user": {
+				if (typeof msg.content === "string") {
+					addText(msg.content);
+				} else {
+					for (const item of msg.content) {
+						if (item.type === "text") addText(item.text);
+						if (item.type === "image") {
+							addText(item.mimeType);
+							addText(item.data);
+						}
+					}
+				}
+				break;
+			}
+			case "assistant": {
+				for (const block of msg.content) {
+					if (block.type === "text") addText(block.text);
+					if (block.type === "thinking") addText(block.thinking);
+					if (block.type === "toolCall") {
+						addText(block.name);
+						addText(block.id);
+						addJson(block.arguments);
+					}
+				}
+				break;
+			}
+			case "toolResult": {
+				addText(msg.toolName);
+				addText(msg.toolCallId);
+				for (const item of msg.content) {
+					if (item.type === "text") addText(item.text);
+					if (item.type === "image") {
+						addText(item.mimeType);
+						addText(item.data);
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	const tools = context.tools ?? [];
+	for (const tool of tools) {
+		addText(tool.name);
+		addText(tool.description);
+		addJson(tool.parameters);
+	}
+
+	const approxTokens = Math.ceil(totals.chars / 4);
+	return {
+		approxTokens,
+		approxChars: totals.chars,
+		approxBytes: totals.bytes,
+		messageCount: context.messages.length,
+		toolCount: tools.length,
+	};
+}
+
+function maybeWarnContextSize(context: Context, contextWindow: number | undefined): void {
+	const estimate = estimateContextSize(context);
+	const tokenThreshold = contextWindow ? Math.floor(contextWindow * CONTEXT_WARN_TOKEN_FRACTION) : 0;
+	const warnTokens = tokenThreshold > 0 && estimate.approxTokens >= tokenThreshold;
+	const warnBytes = estimate.approxBytes >= CONTEXT_WARN_BYTES;
+	if (!warnTokens && !warnBytes) return;
+
+	const pct = contextWindow ? ((estimate.approxTokens / contextWindow) * 100).toFixed(1) : "n/a";
+	const windowText = contextWindow ? contextWindow.toLocaleString() : "n/a";
+	console.warn(
+		`[context-size] est_tokens=${estimate.approxTokens.toLocaleString()} (${pct}% of ${windowText}) ` +
+			`est_bytes=${formatBytes(estimate.approxBytes)} messages=${estimate.messageCount} tools=${estimate.toolCount}`,
+	);
+}
+
 /**
  * Main loop logic shared by agentLoop and agentLoopContinue.
  */
@@ -223,6 +336,8 @@ async function streamAssistantResponse(
 		messages: llmMessages,
 		tools: context.tools,
 	};
+
+	maybeWarnContextSize(llmContext, config.model.contextWindow);
 
 	const streamFunction = streamFn || streamSimple;
 
