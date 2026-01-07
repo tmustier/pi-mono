@@ -348,8 +348,8 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 					}
 				} else if (eventType === "error") {
 					const code = (rawEvent as { code?: string }).code || "";
-					const message = (rawEvent as { message?: string }).message || "Unknown error";
-					throw new Error(code ? `Error Code ${code}: ${message}` : message);
+					const message = (rawEvent as { message?: string }).message || "";
+					throw new Error(formatCodexErrorEvent(rawEvent, code, message));
 				} else if (eventType === "response.failed") {
 					throw new Error(formatCodexFailure(rawEvent) ?? "Unknown error");
 				}
@@ -668,5 +668,26 @@ function formatCodexFailure(rawEvent: Record<string, unknown>): string | null {
 		return `Codex response failed: ${truncate(JSON.stringify(rawEvent), 800)}`;
 	} catch {
 		return "Codex response failed";
+	}
+}
+
+function formatCodexErrorEvent(rawEvent: Record<string, unknown>, code: string, message: string): string {
+	const detail = formatCodexFailure(rawEvent);
+	if (detail) {
+		return detail.replace("response failed", "error event");
+	}
+
+	const meta: string[] = [];
+	if (code) meta.push(`code=${code}`);
+	if (message) meta.push(`message=${message}`);
+
+	if (meta.length > 0) {
+		return `Codex error event (${meta.join(", ")})`;
+	}
+
+	try {
+		return `Codex error event: ${truncate(JSON.stringify(rawEvent), 800)}`;
+	} catch {
+		return "Codex error event";
 	}
 }
