@@ -98,6 +98,77 @@ function createAgentStream(): EventStream<AgentEvent, AgentMessage[]> {
 	);
 }
 
+function estimateContextTokens(context: Context): { tokens: number; messageCount: number; toolCount: number } {
+	let chars = 0;
+
+	const addText = (text?: string) => {
+		if (!text) return;
+		chars += text.length;
+	};
+
+	const addJson = (value: unknown) => {
+		if (value === undefined) return;
+		try {
+			const serialized = JSON.stringify(value);
+			if (serialized) addText(serialized);
+		} catch {
+			// Ignore JSON serialization failures; estimate remains approximate.
+		}
+	};
+
+	addText(context.systemPrompt);
+
+	for (const msg of context.messages) {
+		switch (msg.role) {
+			case "user": {
+				if (typeof msg.content === "string") {
+					addText(msg.content);
+				} else {
+					for (const item of msg.content) {
+						if (item.type === "text") addText(item.text);
+						if (item.type === "image") addText(item.data);
+					}
+				}
+				break;
+			}
+			case "assistant": {
+				for (const block of msg.content) {
+					if (block.type === "text") addText(block.text);
+					if (block.type === "thinking") addText(block.thinking);
+					if (block.type === "toolCall") {
+						addText(block.name);
+						addText(block.id);
+						addJson(block.arguments);
+					}
+				}
+				break;
+			}
+			case "toolResult": {
+				addText(msg.toolName);
+				addText(msg.toolCallId);
+				for (const item of msg.content) {
+					if (item.type === "text") addText(item.text);
+					if (item.type === "image") addText(item.data);
+				}
+				break;
+			}
+		}
+	}
+
+	const tools = context.tools ?? [];
+	for (const tool of tools) {
+		addText(tool.name);
+		addText(tool.description);
+		addJson(tool.parameters);
+	}
+
+	return {
+		tokens: Math.ceil(chars / 4),
+		messageCount: context.messages.length,
+		toolCount: tools.length,
+	};
+}
+
 /**
  * Main loop logic shared by agentLoop and agentLoopContinue.
  */
@@ -223,6 +294,23 @@ async function streamAssistantResponse(
 		messages: llmMessages,
 		tools: context.tools,
 	};
+
+	const threshold = config.contextWarningThresholdTokens;
+	if (threshold !== undefined && threshold > 0) {
+		const estimate = estimateContextTokens(llmContext);
+		if (estimate.tokens >= threshold) {
+			stream.push({
+				type: "context_warning",
+				warning: {
+					estimatedTokens: estimate.tokens,
+					thresholdTokens: threshold,
+					contextWindow: config.model.contextWindow,
+					messageCount: estimate.messageCount,
+					toolCount: estimate.toolCount,
+				},
+			});
+		}
+	}
 
 	const streamFunction = streamFn || streamSimple;
 

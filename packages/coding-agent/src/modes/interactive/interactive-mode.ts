@@ -1480,6 +1480,16 @@ export class InteractiveMode {
 		this.footer.invalidate();
 
 		switch (event.type) {
+			case "context_warning": {
+				const { estimatedTokens, thresholdTokens, contextWindow } = event.warning;
+				const threshold = thresholdTokens.toLocaleString();
+				const windowText = contextWindow ? contextWindow.toLocaleString() : "unknown";
+				this.showWarning(
+					`Context near limit: est ${estimatedTokens.toLocaleString()} tokens (threshold ${threshold} of ${windowText}). ` +
+						"Consider /compact.",
+				);
+				break;
+			}
 			case "agent_start":
 				if (this.loadingAnimation) {
 					this.loadingAnimation.stop();

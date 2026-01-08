@@ -95,6 +95,12 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Use this for follow-up messages that should wait until the agent finishes.
 	 */
 	getFollowUpMessages?: () => Promise<AgentMessage[]>;
+
+	/**
+	 * Emit a context warning when estimated tokens exceed this threshold.
+	 * When undefined, no warning is emitted.
+	 */
+	contextWarningThresholdTokens?: number;
 }
 
 /**
@@ -173,6 +179,17 @@ export interface AgentContext {
 }
 
 /**
+ * Context warning details when the prompt is near the model limit.
+ */
+export type ContextWarning = {
+	estimatedTokens: number;
+	thresholdTokens: number;
+	contextWindow?: number;
+	messageCount: number;
+	toolCount: number;
+};
+
+/**
  * Events emitted by the Agent for UI updates.
  * These events provide fine-grained lifecycle information for messages, turns, and tool executions.
  */
@@ -180,6 +197,7 @@ export type AgentEvent =
 	// Agent lifecycle
 	| { type: "agent_start" }
 	| { type: "agent_end"; messages: AgentMessage[] }
+	| { type: "context_warning"; warning: ContextWarning }
 	// Turn lifecycle - a turn is one assistant response + any tool calls/results
 	| { type: "turn_start" }
 	| { type: "turn_end"; message: AgentMessage; toolResults: ToolResultMessage[] }

@@ -77,6 +77,11 @@ export interface AgentOptions {
 	 * Custom token budgets for thinking levels (token-based providers only).
 	 */
 	thinkingBudgets?: ThinkingBudgets;
+
+	/**
+	 * Reserve tokens for context warning threshold (contextWindow - reserveTokens).
+	 */
+	contextWarningReserveTokens?: number;
 }
 
 export class Agent {
@@ -106,6 +111,7 @@ export class Agent {
 	private runningPrompt?: Promise<void>;
 	private resolveRunningPrompt?: () => void;
 	private _thinkingBudgets?: ThinkingBudgets;
+	private _contextWarningReserveTokens?: number;
 
 	constructor(opts: AgentOptions = {}) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -117,6 +123,7 @@ export class Agent {
 		this._sessionId = opts.sessionId;
 		this.getApiKey = opts.getApiKey;
 		this._thinkingBudgets = opts.thinkingBudgets;
+		this._contextWarningReserveTokens = opts.contextWarningReserveTokens;
 	}
 
 	/**
@@ -328,6 +335,12 @@ export class Agent {
 			tools: this._state.tools,
 		};
 
+		const reserveTokens = this._contextWarningReserveTokens;
+		const contextWarningThresholdTokens =
+			reserveTokens !== undefined && model.contextWindow !== undefined
+				? Math.max(0, model.contextWindow - reserveTokens)
+				: undefined;
+
 		const config: AgentLoopConfig = {
 			model,
 			reasoning,
@@ -336,6 +349,7 @@ export class Agent {
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
+			contextWarningThresholdTokens,
 			getSteeringMessages: async () => {
 				if (this.steeringMode === "one-at-a-time") {
 					if (this.steeringQueue.length > 0) {
@@ -415,6 +429,8 @@ export class Agent {
 					case "agent_end":
 						this._state.isStreaming = false;
 						this._state.streamMessage = null;
+						break;
+					case "context_warning":
 						break;
 				}
 
