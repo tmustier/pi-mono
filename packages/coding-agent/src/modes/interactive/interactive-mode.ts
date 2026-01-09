@@ -244,7 +244,6 @@ export class InteractiveMode {
 			{ name: "share", description: "Share session as a secret GitHub gist" },
 			{ name: "copy", description: "Copy last agent message to clipboard" },
 			{ name: "session", description: "Show session info and stats" },
-			{ name: "dequeue", description: "Restore queued messages to editor" },
 			{ name: "changelog", description: "Show changelog entries" },
 			{ name: "hotkeys", description: "Show all keyboard shortcuts" },
 			{ name: "branch", description: "Create a new branch from a previous message" },
@@ -312,6 +311,7 @@ export class InteractiveMode {
 		const toggleThinking = formatStartupKey(kb.getKeys("toggleThinking"));
 		const externalEditor = formatStartupKey(kb.getKeys("externalEditor"));
 		const followUp = formatStartupKey(kb.getKeys("followUp"));
+		const dequeue = formatStartupKey(kb.getKeys("dequeue"));
 
 		const instructions =
 			theme.fg("dim", interrupt) +
@@ -361,6 +361,9 @@ export class InteractiveMode {
 			"\n" +
 			theme.fg("dim", followUp) +
 			theme.fg("muted", " to queue follow-up") +
+			"\n" +
+			theme.fg("dim", dequeue) +
+			theme.fg("muted", " to restore queued messages") +
 			"\n" +
 			theme.fg("dim", "ctrl+v") +
 			theme.fg("muted", " to paste image") +
@@ -1313,6 +1316,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("toggleThinking", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("externalEditor", () => this.openExternalEditor());
 		this.defaultEditor.onAction("followUp", () => this.handleFollowUp());
+		this.defaultEditor.onAction("dequeue", () => this.handleDequeue());
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -1384,16 +1388,6 @@ export class InteractiveMode {
 			if (text === "/session") {
 				this.handleSessionCommand();
 				this.editor.setText("");
-				return;
-			}
-			if (text === "/dequeue") {
-				this.editor.setText("");
-				const restored = this.restoreQueuedMessagesToEditor({ currentText: "" });
-				if (restored === 0) {
-					this.showStatus("No queued messages to restore");
-				} else {
-					this.showStatus(`Restored ${restored} queued message${restored > 1 ? "s" : ""} to editor`);
-				}
 				return;
 			}
 			if (text === "/changelog") {
@@ -2080,6 +2074,15 @@ export class InteractiveMode {
 		// If not streaming, Alt+Enter acts like regular Enter (trigger onSubmit)
 		else if (this.editor.onSubmit) {
 			this.editor.onSubmit(text);
+		}
+	}
+
+	private handleDequeue(): void {
+		const restored = this.restoreQueuedMessagesToEditor();
+		if (restored === 0) {
+			this.showStatus("No queued messages to restore");
+		} else {
+			this.showStatus(`Restored ${restored} queued message${restored > 1 ? "s" : ""} to editor`);
 		}
 	}
 
@@ -3073,6 +3076,7 @@ export class InteractiveMode {
 		const toggleThinking = this.getAppKeyDisplay("toggleThinking");
 		const externalEditor = this.getAppKeyDisplay("externalEditor");
 		const followUp = this.getAppKeyDisplay("followUp");
+		const dequeue = this.getAppKeyDisplay("dequeue");
 
 		let hotkeys = `
 **Navigation**
@@ -3106,6 +3110,7 @@ export class InteractiveMode {
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${followUp}\` | Queue follow-up message |
+| \`${dequeue}\` | Restore queued messages |
 | \`Ctrl+V\` | Paste image from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |
