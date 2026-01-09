@@ -244,6 +244,7 @@ export class InteractiveMode {
 			{ name: "share", description: "Share session as a secret GitHub gist" },
 			{ name: "copy", description: "Copy last agent message to clipboard" },
 			{ name: "session", description: "Show session info and stats" },
+			{ name: "dequeue", description: "Restore queued messages to editor" },
 			{ name: "changelog", description: "Show changelog entries" },
 			{ name: "hotkeys", description: "Show all keyboard shortcuts" },
 			{ name: "branch", description: "Create a new branch from a previous message" },
@@ -1274,15 +1275,7 @@ export class InteractiveMode {
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
 			if (this.loadingAnimation) {
-				// Abort and restore queued messages to editor
-				const { steering, followUp } = this.session.clearQueue();
-				const allQueued = [...steering, ...followUp];
-				const queuedText = allQueued.join("\n\n");
-				const currentText = this.editor.getText();
-				const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
-				this.editor.setText(combinedText);
-				this.updatePendingMessagesDisplay();
-				this.agent.abort();
+				this.restoreQueuedMessagesToEditor({ abort: true });
 			} else if (this.session.isBashRunning) {
 				this.session.abortBash();
 			} else if (this.isBashMode) {
@@ -1391,6 +1384,16 @@ export class InteractiveMode {
 			if (text === "/session") {
 				this.handleSessionCommand();
 				this.editor.setText("");
+				return;
+			}
+			if (text === "/dequeue") {
+				this.editor.setText("");
+				const restored = this.restoreQueuedMessagesToEditor({ currentText: "" });
+				if (restored === 0) {
+					this.showStatus("No queued messages to restore");
+				} else {
+					this.showStatus(`Restored ${restored} queued message${restored > 1 ? "s" : ""} to editor`);
+				}
 				return;
 			}
 			if (text === "/changelog") {
@@ -2251,6 +2254,27 @@ export class InteractiveMode {
 				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
 		}
+	}
+
+	private restoreQueuedMessagesToEditor(options?: { abort?: boolean; currentText?: string }): number {
+		const { steering, followUp } = this.session.clearQueue();
+		const allQueued = [...steering, ...followUp];
+		if (allQueued.length === 0) {
+			this.updatePendingMessagesDisplay();
+			if (options?.abort) {
+				this.agent.abort();
+			}
+			return 0;
+		}
+		const queuedText = allQueued.join("\n\n");
+		const currentText = options?.currentText ?? this.editor.getText();
+		const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
+		this.editor.setText(combinedText);
+		this.updatePendingMessagesDisplay();
+		if (options?.abort) {
+			this.agent.abort();
+		}
+		return allQueued.length;
 	}
 
 	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
