@@ -421,7 +421,7 @@ export class InteractiveMode {
 			theme.fg("muted", " to queue follow-up") +
 			"\n" +
 			theme.fg("dim", dequeue) +
-			theme.fg("muted", " to restore queued messages") +
+			theme.fg("muted", " to edit last queued message") +
 			"\n" +
 			theme.fg("dim", "ctrl+v") +
 			theme.fg("muted", " to paste image") +
@@ -2148,11 +2148,11 @@ export class InteractiveMode {
 	}
 
 	private handleDequeue(): void {
-		const restored = this.restoreQueuedMessagesToEditor();
+		const restored = this.restoreQueuedMessagesToEditor({ mode: "latest" });
 		if (restored === 0) {
-			this.showStatus("No queued messages to restore");
+			this.showStatus("No queued messages to edit");
 		} else {
-			this.showStatus(`Restored ${restored} queued message${restored > 1 ? "s" : ""} to editor`);
+			this.showStatus("Editing most recent queued message");
 		}
 	}
 
@@ -2327,10 +2327,38 @@ export class InteractiveMode {
 				const text = theme.fg("dim", `Follow-up: ${message}`);
 				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
+
+			const dequeueHint = this.formatKeyHint(this.keybindings.getKeys("dequeue"));
+			if (dequeueHint) {
+				const hintText = theme.fg("dim", `↳ ${dequeueHint} edit last queued message`);
+				this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 1, 0));
+			}
 		}
 	}
 
-	private restoreQueuedMessagesToEditor(options?: { abort?: boolean; currentText?: string }): number {
+	private restoreQueuedMessagesToEditor(options?: {
+		abort?: boolean;
+		currentText?: string;
+		mode?: "all" | "latest";
+	}): number {
+		const mode = options?.mode ?? "all";
+		if (mode === "latest") {
+			const message = this.session.popQueuedMessage();
+			if (!message) {
+				this.updatePendingMessagesDisplay();
+				if (options?.abort) {
+					this.agent.abort();
+				}
+				return 0;
+			}
+			this.editor.setText(message.text);
+			this.updatePendingMessagesDisplay();
+			if (options?.abort) {
+				this.agent.abort();
+			}
+			return 1;
+		}
+
 		const { steering, followUp } = this.session.clearQueue();
 		const allQueued = [...steering, ...followUp];
 		if (allQueued.length === 0) {
@@ -3321,6 +3349,33 @@ export class InteractiveMode {
 	}
 
 	/**
+	 * Format keybindings for inline hints (platform-aware).
+	 */
+	private formatKeyHint(keys: string | string[]): string {
+		const keyArray = Array.isArray(keys) ? keys : [keys];
+		return keyArray
+			.map((key) =>
+				key
+					.split("+")
+					.map((part) => this.formatKeyHintPart(part))
+					.join("+"),
+			)
+			.join("/");
+	}
+
+	private formatKeyHintPart(part: string): string {
+		const normalized = part.toLowerCase();
+		if (normalized === "alt" || normalized === "option") {
+			return process.platform === "darwin" ? "⌥" : "Alt";
+		}
+		if (normalized === "up") return "↑";
+		if (normalized === "down") return "↓";
+		if (normalized === "left") return "←";
+		if (normalized === "right") return "→";
+		return part.charAt(0).toUpperCase() + part.slice(1);
+	}
+
+	/**
 	 * Format keybindings for display (e.g., "ctrl+c" -> "Ctrl+C").
 	 */
 	private formatKeyDisplay(keys: string | string[]): string {
@@ -3411,7 +3466,7 @@ export class InteractiveMode {
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${followUp}\` | Queue follow-up message |
-| \`${dequeue}\` | Restore queued messages |
+| \`${dequeue}\` | Edit last queued message |
 | \`Ctrl+V\` | Paste image from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |

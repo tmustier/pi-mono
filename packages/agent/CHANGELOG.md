@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `popSteeringQueue()` and `popFollowUpQueue()` helpers for removing the most recent queued messages.
+
 ## [0.43.0] - 2026-01-11
 
 ## [0.42.5] - 2026-01-11

@@ -128,6 +128,11 @@ export interface SessionStats {
 	cost: number;
 }
 
+type QueuedUserMessage = {
+	text: string;
+	mode: "steer" | "followUp";
+};
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -158,6 +163,8 @@ export class AgentSession {
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
 	private _followUpMessages: string[] = [];
+	/** Ordered list of queued user messages (steer + follow-up). */
+	private _queuedUserMessages: QueuedUserMessage[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 
@@ -248,11 +255,13 @@ export class AgentSession {
 				const steeringIndex = this._steeringMessages.indexOf(messageText);
 				if (steeringIndex !== -1) {
 					this._steeringMessages.splice(steeringIndex, 1);
+					this._removeQueuedUserMessage("steer", messageText);
 				} else {
 					// Check follow-up queue
 					const followUpIndex = this._followUpMessages.indexOf(messageText);
 					if (followUpIndex !== -1) {
 						this._followUpMessages.splice(followUpIndex, 1);
+						this._removeQueuedUserMessage("followUp", messageText);
 					}
 				}
 			}
@@ -731,6 +740,7 @@ export class AgentSession {
 	 */
 	private async _queueSteer(text: string): Promise<void> {
 		this._steeringMessages.push(text);
+		this._queuedUserMessages.push({ text, mode: "steer" });
 		this.agent.steer({
 			role: "user",
 			content: [{ type: "text", text }],
@@ -743,11 +753,26 @@ export class AgentSession {
 	 */
 	private async _queueFollowUp(text: string): Promise<void> {
 		this._followUpMessages.push(text);
+		this._queuedUserMessages.push({ text, mode: "followUp" });
 		this.agent.followUp({
 			role: "user",
 			content: [{ type: "text", text }],
 			timestamp: Date.now(),
 		});
+	}
+
+	private _removeQueuedUserMessage(mode: "steer" | "followUp", text: string): void {
+		const index = this._queuedUserMessages.findIndex((message) => message.mode === mode && message.text === text);
+		if (index !== -1) {
+			this._queuedUserMessages.splice(index, 1);
+		}
+	}
+
+	private _removeLastQueuedMessage(queue: string[], text: string): void {
+		const index = queue.lastIndexOf(text);
+		if (index !== -1) {
+			queue.splice(index, 1);
+		}
 	}
 
 	/**
@@ -861,8 +886,27 @@ export class AgentSession {
 		const followUp = [...this._followUpMessages];
 		this._steeringMessages = [];
 		this._followUpMessages = [];
+		this._queuedUserMessages = [];
 		this.agent.clearAllQueues();
 		return { steering, followUp };
+	}
+
+	/**
+	 * Remove and return the most recently queued user message.
+	 */
+	popQueuedMessage(): QueuedUserMessage | undefined {
+		const message = this._queuedUserMessages.pop();
+		if (!message) return undefined;
+
+		if (message.mode === "steer") {
+			this._removeLastQueuedMessage(this._steeringMessages, message.text);
+			this.agent.popSteeringQueue();
+		} else {
+			this._removeLastQueuedMessage(this._followUpMessages, message.text);
+			this.agent.popFollowUpQueue();
+		}
+
+		return message;
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
@@ -932,6 +976,7 @@ export class AgentSession {
 		this.agent.sessionId = this.sessionManager.getSessionId();
 		this._steeringMessages = [];
 		this._followUpMessages = [];
+		this._queuedUserMessages = [];
 		this._pendingNextTurnMessages = [];
 		this._reconnectToAgent();
 
@@ -1786,6 +1831,7 @@ export class AgentSession {
 		await this.abort();
 		this._steeringMessages = [];
 		this._followUpMessages = [];
+		this._queuedUserMessages = [];
 		this._pendingNextTurnMessages = [];
 
 		// Set new session

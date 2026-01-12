@@ -214,6 +214,20 @@ export class Agent {
 		this.followUpQueue.push(m);
 	}
 
+	/**
+	 * Remove and return the most recently queued steering message.
+	 */
+	popSteeringQueue(): AgentMessage | undefined {
+		return this.steeringQueue.pop();
+	}
+
+	/**
+	 * Remove and return the most recently queued follow-up message.
+	 */
+	popFollowUpQueue(): AgentMessage | undefined {
+		return this.followUpQueue.pop();
+	}
+
 	clearSteeringQueue() {
 		this.steeringQueue = [];
 	}

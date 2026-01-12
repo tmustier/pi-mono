@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Alt+Up now edits the most recent queued message and shows an inline hint with platform-specific key labels.
+
 ## [0.43.0] - 2026-01-11
 
 ### Breaking Changes
