@@ -79,11 +79,13 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		// Get last assistant message for context percentage calculation (skip aborted messages)
+		// Get last assistant message for context percentage calculation (skip aborted/error messages)
 		const lastAssistantMessage = state.messages
 			.slice()
 			.reverse()
-			.find((m) => m.role === "assistant" && m.stopReason !== "aborted") as AssistantMessage | undefined;
+			.find((m) => m.role === "assistant" && m.stopReason !== "aborted" && m.stopReason !== "error") as
+			| AssistantMessage
+			| undefined;
 
 		// Calculate context percentage from last message (input + output + cacheRead + cacheWrite)
 		const contextTokens = lastAssistantMessage
