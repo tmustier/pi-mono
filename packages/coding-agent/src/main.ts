@@ -586,6 +586,10 @@ export async function main(args: string[]) {
 		const selectedPath = await selectSession(
 			(onProgress) => SessionManager.list(cwd, parsed.sessionDir, onProgress),
 			SessionManager.listAll,
+			{
+				current: () => SessionManager.listRecent(cwd, parsed.sessionDir, 10),
+				all: () => SessionManager.listAllRecent(10),
+			},
 		);
 		if (!selectedPath) {
 			console.log(chalk.dim("No session selected"));

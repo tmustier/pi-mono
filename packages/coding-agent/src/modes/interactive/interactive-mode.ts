@@ -3471,6 +3471,11 @@ export class InteractiveMode {
 				},
 
 				this.sessionManager.getSessionFile(),
+				{
+					current: () =>
+						SessionManager.listRecent(this.sessionManager.getCwd(), this.sessionManager.getSessionDir(), 10),
+					all: () => SessionManager.listAllRecent(10),
+				},
 			);
 			return { component: selector, focus: selector };
 		});

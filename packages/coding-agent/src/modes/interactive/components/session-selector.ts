@@ -186,6 +186,7 @@ class SessionList implements Component, Focusable {
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
 	private currentSessionFilePath?: string;
+	private searchReady = true;
 	public onSelect?: (sessionPath: string) => void;
 	public onCancel?: () => void;
 	public onExit: () => void = () => {};
@@ -232,6 +233,13 @@ class SessionList implements Component, Focusable {
 		this.filterSessions(this.searchInput.getValue());
 	}
 
+	setSearchReady(ready: boolean): void {
+		this.searchReady = ready;
+		if (ready) {
+			this.filterSessions(this.searchInput.getValue());
+		}
+	}
+
 	setSessions(sessions: SessionInfo[], showCwd: boolean): void {
 		this.allSessions = sessions;
 		this.showCwd = showCwd;
@@ -269,6 +277,11 @@ class SessionList implements Component, Focusable {
 		// Render search input
 		lines.push(...this.searchInput.render(width));
 		lines.push(""); // Blank line after search
+
+		if (!this.searchReady && this.searchInput.getValue().trim()) {
+			lines.push(theme.fg("muted", truncateToWidth("  Loading all sessions for search...", width, "…")));
+			return lines;
+		}
 
 		if (this.filteredSessions.length === 0) {
 			if (this.showCwd) {
@@ -415,7 +428,10 @@ class SessionList implements Component, Focusable {
 		if (kb.matches(keyData, "deleteSessionNoninvasive")) {
 			if (this.searchInput.getValue().length > 0) {
 				this.searchInput.handleInput(keyData);
-				this.filterSessions(this.searchInput.getValue());
+				const query = this.searchInput.getValue();
+				if (this.searchReady || !query.trim()) {
+					this.filterSessions(query);
+				}
 				return;
 			}
 
@@ -455,12 +471,20 @@ class SessionList implements Component, Focusable {
 		// Pass everything else to search input
 		else {
 			this.searchInput.handleInput(keyData);
-			this.filterSessions(this.searchInput.getValue());
+			const query = this.searchInput.getValue();
+			if (this.searchReady || !query.trim()) {
+				this.filterSessions(query);
+			}
 		}
 	}
 }
 
 type SessionsLoader = (onProgress?: SessionListProgress) => Promise<SessionInfo[]>;
+
+type SessionsPreviewLoaders = {
+	current: SessionsLoader;
+	all: SessionsLoader;
+};
 
 /**
  * Delete a session file, trying the `trash` CLI first, then falling back to unlink
@@ -527,8 +551,12 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	private sortMode: SortMode = "relevance";
 	private currentSessions: SessionInfo[] | null = null;
 	private allSessions: SessionInfo[] | null = null;
+	private currentSessionsComplete = false;
+	private allSessionsComplete = false;
 	private currentSessionsLoader: SessionsLoader;
 	private allSessionsLoader: SessionsLoader;
+	private currentSessionsPreviewLoader: SessionsLoader;
+	private allSessionsPreviewLoader: SessionsLoader;
 	private onCancel: () => void;
 	private requestRender: () => void;
 	private renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
@@ -580,10 +608,13 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			showRenameHint?: boolean;
 		},
 		currentSessionFilePath?: string,
+		previewLoaders?: SessionsPreviewLoaders,
 	) {
 		super();
 		this.currentSessionsLoader = currentSessionsLoader;
 		this.allSessionsLoader = allSessionsLoader;
+		this.currentSessionsPreviewLoader = previewLoaders?.current ?? currentSessionsLoader;
+		this.allSessionsPreviewLoader = previewLoaders?.all ?? allSessionsLoader;
 		this.onCancel = onCancel;
 		this.requestRender = requestRender;
 		this.header = new SessionSelectorHeader(this.scope, this.sortMode, this.requestRender);
@@ -673,7 +704,120 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	}
 
 	private loadCurrentSessions(): void {
-		void this.loadScope("current", "initial");
+		if (this.currentLoading) return;
+		this.currentLoading = true;
+		this.currentSessionsComplete = false;
+		this.header.setScope("current");
+		this.header.setLoading(true);
+		this.sessionList.setSearchReady(false);
+		this.requestRender();
+
+		// Load preview first if available (different loader)
+		if (this.currentSessionsPreviewLoader !== this.currentSessionsLoader) {
+			void this.currentSessionsPreviewLoader()
+				.then((sessions) => {
+					this.currentSessions = sessions;
+					if (this.scope !== "current" || this.currentSessionsComplete) return;
+					this.sessionList.setSessions(sessions, false);
+					this.sessionList.setSearchReady(false);
+					this.requestRender();
+				})
+				.catch(() => {
+					if (this.scope !== "current" || this.currentSessionsComplete) return;
+					this.sessionList.setSearchReady(false);
+				});
+		}
+
+		this.currentSessionsLoader((loaded, total) => {
+			if (this.scope !== "current") return;
+			this.header.setProgress(loaded, total);
+			this.requestRender();
+		})
+			.then((sessions) => {
+				this.currentSessions = sessions;
+				this.currentSessionsComplete = true;
+				this.currentLoading = false;
+
+				if (this.scope !== "current") return;
+
+				this.header.setLoading(false);
+				this.sessionList.setSessions(sessions, false);
+				this.sessionList.setSearchReady(true);
+				this.requestRender();
+			})
+			.catch((error: unknown) => {
+				this.currentLoading = false;
+				const message = error instanceof Error ? error.message : String(error);
+
+				if (this.scope !== "current") return;
+
+				this.header.setLoading(false);
+				this.header.setStatusMessage({ type: "error", message: `Failed to load sessions: ${message}` }, 4000);
+				this.sessionList.setSessions(this.currentSessions ?? [], false);
+				this.sessionList.setSearchReady(true);
+				this.requestRender();
+			});
+	}
+
+	private loadAllSessions(): void {
+		if (this.allLoading) return;
+		this.allLoading = true;
+		this.allSessionsComplete = false;
+		const seq = ++this.allLoadSeq;
+
+		// Load preview first if available (different loader)
+		if (this.allSessionsPreviewLoader !== this.allSessionsLoader) {
+			void this.allSessionsPreviewLoader()
+				.then((sessions) => {
+					this.allSessions = sessions;
+					if (seq !== this.allLoadSeq || this.scope !== "all" || this.allSessionsComplete) return;
+					this.sessionList.setSessions(sessions, true);
+					this.sessionList.setSearchReady(false);
+					this.requestRender();
+				})
+				.catch(() => {
+					if (seq !== this.allLoadSeq || this.scope !== "all" || this.allSessionsComplete) return;
+					this.sessionList.setSearchReady(false);
+				});
+		}
+
+		this.allSessionsLoader((loaded, total) => {
+			if (seq !== this.allLoadSeq) return;
+			if (this.scope !== "all") return;
+			this.header.setProgress(loaded, total);
+			this.requestRender();
+		})
+			.then((sessions) => {
+				this.allSessions = sessions;
+				this.allSessionsComplete = true;
+				this.allLoading = false;
+
+				if (seq !== this.allLoadSeq) return;
+				if (this.scope !== "all") return;
+
+				this.header.setLoading(false);
+				this.sessionList.setSessions(sessions, true);
+				this.sessionList.setSearchReady(true);
+				this.requestRender();
+
+				const currentCount = this.currentSessions?.length ?? 0;
+				if (sessions.length === 0 && currentCount === 0) {
+					this.onCancel();
+				}
+			})
+			.catch((error: unknown) => {
+				this.allLoading = false;
+				const message = error instanceof Error ? error.message : String(error);
+
+				if (seq !== this.allLoadSeq) return;
+				if (this.scope !== "all") return;
+
+				this.header.setLoading(false);
+				this.header.setStatusMessage({ type: "error", message: `Failed to load sessions: ${message}` }, 4000);
+				this.sessionList.setSessions(this.allSessions ?? [], true);
+				this.sessionList.setSearchReady(true);
+				this.requestRender();
+			});
 	}
 
 	private enterRenameMode(sessionPath: string, currentName: string | undefined): void {
@@ -726,72 +870,6 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	private async loadScope(scope: SessionScope, reason: "initial" | "refresh" | "toggle"): Promise<void> {
-		const showCwd = scope === "all";
-
-		// Mark loading
-		if (scope === "current") {
-			this.currentLoading = true;
-		} else {
-			this.allLoading = true;
-		}
-
-		const seq = scope === "all" ? ++this.allLoadSeq : undefined;
-		this.header.setScope(scope);
-		this.header.setLoading(true);
-		this.requestRender();
-
-		const onProgress = (loaded: number, total: number) => {
-			if (scope !== this.scope) return;
-			if (seq !== undefined && seq !== this.allLoadSeq) return;
-			this.header.setProgress(loaded, total);
-			this.requestRender();
-		};
-
-		try {
-			const sessions = await (scope === "current"
-				? this.currentSessionsLoader(onProgress)
-				: this.allSessionsLoader(onProgress));
-
-			if (scope === "current") {
-				this.currentSessions = sessions;
-				this.currentLoading = false;
-			} else {
-				this.allSessions = sessions;
-				this.allLoading = false;
-			}
-
-			if (scope !== this.scope) return;
-			if (seq !== undefined && seq !== this.allLoadSeq) return;
-
-			this.header.setLoading(false);
-			this.sessionList.setSessions(sessions, showCwd);
-			this.requestRender();
-
-			if (scope === "all" && sessions.length === 0 && (this.currentSessions?.length ?? 0) === 0) {
-				this.onCancel();
-			}
-		} catch (err) {
-			if (scope === "current") {
-				this.currentLoading = false;
-			} else {
-				this.allLoading = false;
-			}
-
-			if (scope !== this.scope) return;
-			if (seq !== undefined && seq !== this.allLoadSeq) return;
-
-			const message = err instanceof Error ? err.message : String(err);
-			this.header.setLoading(false);
-			this.header.setStatusMessage({ type: "error", message: `Failed to load sessions: ${message}` }, 4000);
-
-			if (reason === "initial") {
-				this.sessionList.setSessions([], showCwd);
-			}
-			this.requestRender();
-		}
-	}
-
 	private toggleSortMode(): void {
 		this.sortMode = this.sortMode === "recent" ? "relevance" : "recent";
 		this.header.setSortMode(this.sortMode);
@@ -800,7 +878,16 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	}
 
 	private async refreshSessionsAfterMutation(): Promise<void> {
-		await this.loadScope(this.scope, "refresh");
+		// Reset completion flags and reload the current scope
+		if (this.scope === "current") {
+			this.currentSessionsComplete = false;
+			this.currentLoading = false;
+			this.loadCurrentSessions();
+		} else {
+			this.allSessionsComplete = false;
+			this.allLoading = false;
+			this.loadAllSessions();
+		}
 	}
 
 	private toggleScope(): void {
@@ -809,23 +896,27 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.header.setScope(this.scope);
 
 			if (this.allSessions !== null) {
-				this.header.setLoading(false);
+				this.header.setLoading(this.allLoading);
 				this.sessionList.setSessions(this.allSessions, true);
+				this.sessionList.setSearchReady(this.allSessionsComplete);
 				this.requestRender();
 				return;
 			}
 
-			if (!this.allLoading) {
-				void this.loadScope("all", "toggle");
-			}
-			return;
-		}
+			this.header.setLoading(true);
+			this.sessionList.setSessions([], true);
+			this.sessionList.setSearchReady(false);
+			this.requestRender();
 
-		this.scope = "current";
-		this.header.setScope(this.scope);
-		this.header.setLoading(this.currentLoading);
-		this.sessionList.setSessions(this.currentSessions ?? [], false);
-		this.requestRender();
+			this.loadAllSessions();
+		} else {
+			this.scope = "current";
+			this.header.setScope(this.scope);
+			this.header.setLoading(this.currentLoading);
+			this.sessionList.setSessions(this.currentSessions ?? [], false);
+			this.sessionList.setSearchReady(this.currentSessionsComplete);
+			this.requestRender();
+		}
 	}
 
 	getSessionList(): SessionList {

@@ -645,6 +645,44 @@ async function listSessionsFromDir(
 	return sessions;
 }
 
+async function listSessionsFromDirRecent(dir: string, limit: number): Promise<SessionInfo[]> {
+	const sessions: SessionInfo[] = [];
+	if (!existsSync(dir)) {
+		return sessions;
+	}
+
+	try {
+		const dirEntries = await readdir(dir);
+		const files = dirEntries.filter((f) => f.endsWith(".jsonl")).map((f) => join(dir, f));
+		const stats = await Promise.all(
+			files.map(async (file) => {
+				try {
+					const fileStat = await stat(file);
+					return { path: file, mtime: fileStat.mtime };
+				} catch {
+					return null;
+				}
+			}),
+		);
+
+		const sorted = stats
+			.filter((item): item is { path: string; mtime: Date } => item !== null)
+			.sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+			.slice(0, Math.max(0, limit));
+
+		const results = await Promise.all(sorted.map((file) => buildSessionInfo(file.path)));
+		for (const info of results) {
+			if (info) {
+				sessions.push(info);
+			}
+		}
+	} catch {
+		// Return empty list on error
+	}
+
+	return sessions;
+}
+
 /**
  * Manages conversation sessions as append-only trees stored in JSONL files.
  *
@@ -1322,6 +1360,19 @@ export class SessionManager {
 	}
 
 	/**
+	 * List a recent subset of sessions for a directory.
+	 * @param cwd Working directory (used to compute default session directory)
+	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
+	 * @param limit Maximum number of sessions to return (default: 10)
+	 */
+	static async listRecent(cwd: string, sessionDir?: string, limit = 10): Promise<SessionInfo[]> {
+		const dir = sessionDir ?? getDefaultSessionDir(cwd);
+		const sessions = await listSessionsFromDirRecent(dir, limit);
+		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+		return sessions;
+	}
+
+	/**
 	 * List all sessions for a directory.
 	 * @param cwd Working directory (used to compute default session directory)
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
@@ -1332,6 +1383,61 @@ export class SessionManager {
 		const sessions = await listSessionsFromDir(dir, onProgress);
 		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 		return sessions;
+	}
+
+	/**
+	 * List a recent subset of sessions across all project directories.
+	 * @param limit Maximum number of sessions to return (default: 10)
+	 */
+	static async listAllRecent(limit = 10): Promise<SessionInfo[]> {
+		const sessionsDir = getSessionsDir();
+
+		try {
+			if (!existsSync(sessionsDir)) {
+				return [];
+			}
+			const entries = await readdir(sessionsDir, { withFileTypes: true });
+			const dirs = entries.filter((e) => e.isDirectory()).map((e) => join(sessionsDir, e.name));
+
+			const allFiles: string[] = [];
+			for (const dir of dirs) {
+				try {
+					const files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl"));
+					allFiles.push(...files.map((f) => join(dir, f)));
+				} catch {
+					// Ignore unreadable directories
+				}
+			}
+
+			const stats = await Promise.all(
+				allFiles.map(async (file) => {
+					try {
+						const fileStat = await stat(file);
+						return { path: file, mtime: fileStat.mtime };
+					} catch {
+						return null;
+					}
+				}),
+			);
+
+			const sorted = stats
+				.filter((item): item is { path: string; mtime: Date } => item !== null)
+				.sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+				.slice(0, Math.max(0, limit));
+
+			const sessions: SessionInfo[] = [];
+			const results = await Promise.all(sorted.map((file) => buildSessionInfo(file.path)));
+			for (const info of results) {
+				if (info) {
+					sessions.push(info);
+				}
+			}
+
+			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+			return sessions;
+		} catch {
+			return [];
+		}
 	}
 
 	/**
