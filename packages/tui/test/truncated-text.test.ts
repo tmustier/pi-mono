@@ -126,4 +126,12 @@ describe("TruncatedText component", () => {
 		assert.ok(stripped.includes("..."));
 		assert.ok(!stripped.includes("Second line"));
 	});
+
+	it("ignores OSC and CSI control sequences in width calculation", () => {
+		const withCsi = `Hello\x1b[2AWorld`;
+		assert.strictEqual(visibleWidth(withCsi), "HelloWorld".length);
+
+		const withOsc = `Hi\x1b]1337;File=inline=1:AAAA\x07There`;
+		assert.strictEqual(visibleWidth(withOsc), "HiThere".length);
+	});
 });

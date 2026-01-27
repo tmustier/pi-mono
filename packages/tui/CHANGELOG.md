@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fixed overlays rendering behind inline Kitty images, including background layering and compositing placement.
+
 ## [0.50.1] - 2026-01-26
 
 ## [0.50.0] - 2026-01-26

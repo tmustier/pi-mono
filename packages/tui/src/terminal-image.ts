@@ -22,6 +22,10 @@ export interface ImageRenderOptions {
 	preserveAspectRatio?: boolean;
 	/** Kitty image ID. If provided, reuses/replaces existing image with this ID. */
 	imageId?: number;
+	/** Kitty image z-index for placement. Negative values render below text. */
+	zIndex?: number;
+	/** Kitty cursor movement policy (C=1 leaves cursor in place). */
+	cursorPolicy?: number;
 }
 
 let cachedCapabilities: TerminalCapabilities | null = null;
@@ -97,6 +101,8 @@ export function encodeKitty(
 		columns?: number;
 		rows?: number;
 		imageId?: number;
+		zIndex?: number;
+		cursorPolicy?: number;
 	} = {},
 ): string {
 	const CHUNK_SIZE = 4096;
@@ -106,6 +112,8 @@ export function encodeKitty(
 	if (options.columns) params.push(`c=${options.columns}`);
 	if (options.rows) params.push(`r=${options.rows}`);
 	if (options.imageId) params.push(`i=${options.imageId}`);
+	if (options.zIndex !== undefined) params.push(`z=${options.zIndex}`);
+	if (options.cursorPolicy !== undefined) params.push(`C=${options.cursorPolicy}`);
 
 	if (base64Data.length <= CHUNK_SIZE) {
 		return `\x1b_G${params.join(",")};${base64Data}\x1b\\`;
@@ -344,7 +352,15 @@ export function renderImage(
 
 	if (caps.images === "kitty") {
 		// Only use imageId if explicitly provided - static images don't need IDs
-		const sequence = encodeKitty(base64Data, { columns: maxWidth, rows, imageId: options.imageId });
+		const zIndex = options.zIndex ?? -1073741825;
+		const cursorPolicy = options.cursorPolicy ?? 1;
+		const sequence = encodeKitty(base64Data, {
+			columns: maxWidth,
+			rows,
+			imageId: options.imageId,
+			zIndex,
+			cursorPolicy,
+		});
 		return { sequence, rows, imageId: options.imageId };
 	}
 

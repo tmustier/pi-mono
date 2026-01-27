@@ -108,10 +108,10 @@ export function visibleWidth(str: string): number {
 		clean = clean.replace(/\t/g, "   ");
 	}
 	if (clean.includes("\x1b")) {
-		// Strip SGR codes (\x1b[...m) and cursor codes (\x1b[...G/K/H/J)
-		clean = clean.replace(/\x1b\[[0-9;]*[mGKHJ]/g, "");
-		// Strip OSC 8 hyperlinks: \x1b]8;;URL\x07 and \x1b]8;;\x07
-		clean = clean.replace(/\x1b\]8;;[^\x07]*\x07/g, "");
+		// Strip CSI sequences (SGR, cursor movement, etc.)
+		clean = clean.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+		// Strip OSC sequences (hyperlinks, window titles, iTerm2 images, etc.)
+		clean = clean.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
 		// Strip APC sequences: \x1b_...\x07 or \x1b_...\x1b\\ (used for cursor marker)
 		clean = clean.replace(/\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
 	}
@@ -142,11 +142,16 @@ export function extractAnsiCode(str: string, pos: number): { code: string; lengt
 
 	const next = str[pos + 1];
 
-	// CSI sequence: ESC [ ... m/G/K/H/J
+	// CSI sequence: ESC [ ... <final byte>
 	if (next === "[") {
 		let j = pos + 2;
-		while (j < str.length && !/[mGKHJ]/.test(str[j]!)) j++;
-		if (j < str.length) return { code: str.substring(pos, j + 1), length: j + 1 - pos };
+		while (j < str.length) {
+			const final = str[j]!;
+			if (final >= "@" && final <= "~") {
+				return { code: str.substring(pos, j + 1), length: j + 1 - pos };
+			}
+			j++;
+		}
 		return null;
 	}
 

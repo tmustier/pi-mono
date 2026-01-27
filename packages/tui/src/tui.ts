@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { isKeyRelease, matchesKey } from "./keys.js";
 import type { Terminal } from "./terminal.js";
 import { getCapabilities, setCellDimensions } from "./terminal-image.js";
-import { extractSegments, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
+import { extractAnsiCode, extractSegments, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
 
 /**
  * Component interface - all components must implement this
@@ -715,6 +715,15 @@ export class TUI extends Container {
 		return lines.map((line) => (this.containsImage(line) ? line : line + reset));
 	}
 
+	private extractKittySequence(line: string): { sequence: string; column: number; start: number; end: number } | null {
+		const start = line.indexOf("\x1b_G");
+		if (start === -1) return null;
+		const ansi = extractAnsiCode(line, start);
+		if (!ansi || !ansi.code.startsWith("\x1b_G")) return null;
+		const column = visibleWidth(line.slice(0, start));
+		return { sequence: ansi.code, column, start, end: start + ansi.length };
+	}
+
 	/** Splice overlay content into a base line at a specific column. Single-pass optimized. */
 	private compositeLineAt(
 		baseLine: string,
@@ -723,11 +732,17 @@ export class TUI extends Container {
 		overlayWidth: number,
 		totalWidth: number,
 	): string {
-		if (this.containsImage(baseLine)) return baseLine;
+		// iTerm2 inline images render above text; avoid compositing overlays into those lines.
+		if (baseLine.includes("\x1b]1337;File=")) {
+			return baseLine;
+		}
+
+		const kitty = this.extractKittySequence(baseLine);
+		const baseLineWithoutKitty = kitty ? baseLine.slice(0, kitty.start) + baseLine.slice(kitty.end) : baseLine;
 
 		// Single pass through baseLine extracts both before and after segments
 		const afterStart = startCol + overlayWidth;
-		const base = extractSegments(baseLine, startCol, afterStart, totalWidth - afterStart, true);
+		const base = extractSegments(baseLineWithoutKitty, startCol, afterStart, totalWidth - afterStart, true);
 
 		// Extract overlay with width tracking (strict=true to exclude wide chars at boundary)
 		const overlay = sliceWithWidth(overlayLine, 0, overlayWidth, true);
@@ -759,11 +774,15 @@ export class TUI extends Container {
 		// - Wide characters at segment boundaries
 		// - Edge cases in segment extraction
 		const resultWidth = visibleWidth(result);
-		if (resultWidth <= totalWidth) {
-			return result;
+		const truncated = resultWidth <= totalWidth ? result : sliceByColumn(result, 0, totalWidth, true);
+
+		if (!kitty) {
+			return truncated;
 		}
-		// Truncate with strict=true to ensure we don't exceed totalWidth
-		return sliceByColumn(result, 0, totalWidth, true);
+
+		const moveToSeq = kitty.column > 0 ? `\x1b[${kitty.column + 1}G` : "";
+		const moveToStart = "\x1b[1G";
+		return `${moveToSeq}${kitty.sequence}${moveToStart}${truncated}`;
 	}
 
 	/**
