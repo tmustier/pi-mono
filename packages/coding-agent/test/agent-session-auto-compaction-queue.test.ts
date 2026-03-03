@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { type AssistantMessage, getModel } from "@mariozechner/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentSession } from "../src/core/agent-session.js";
+import { AgentSession, type AgentSessionEvent } from "../src/core/agent-session.js";
 import { AuthStorage } from "../src/core/auth-storage.js";
+import { createExtensionRuntime, type Extension } from "../src/core/extensions/index.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
@@ -30,11 +31,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 	let session: AgentSession;
 	let tempDir: string;
 
-	beforeEach(() => {
-		tempDir = join(tmpdir(), `pi-auto-compaction-queue-${Date.now()}`);
-		mkdirSync(tempDir, { recursive: true });
-		vi.useFakeTimers();
-
+	function createSession(extensions: Extension[] = []): AgentSession {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			initialState: {
@@ -50,14 +47,32 @@ describe("AgentSession auto-compaction queue resume", () => {
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 		const modelRegistry = new ModelRegistry(authStorage, tempDir);
 
+		const runtime = createExtensionRuntime();
+		const resourceLoader =
+			extensions.length === 0
+				? createTestResourceLoader()
+				: {
+						...createTestResourceLoader(),
+						getExtensions: () => ({ extensions, errors: [], runtime }),
+					};
+
 		session = new AgentSession({
 			agent,
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
 			modelRegistry,
-			resourceLoader: createTestResourceLoader(),
+			resourceLoader,
 		});
+
+		return session;
+	}
+
+	beforeEach(() => {
+		tempDir = join(tmpdir(), `pi-auto-compaction-queue-${Date.now()}`);
+		mkdirSync(tempDir, { recursive: true });
+		vi.useFakeTimers();
+		createSession();
 	});
 
 	afterEach(() => {
@@ -147,5 +162,55 @@ describe("AgentSession auto-compaction queue resume", () => {
 			errorMessage:
 				"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 		});
+	});
+
+	it("should emit auto-compaction lifecycle and resume queue for extension ctx.compact()", async () => {
+		session.dispose();
+
+		const extension: Extension = {
+			path: "test-extension",
+			resolvedPath: "/test/test-extension.ts",
+			handlers: new Map(),
+			tools: new Map(),
+			messageRenderers: new Map(),
+			commands: new Map(),
+			flags: new Map(),
+			shortcuts: new Map(),
+		};
+		createSession([extension]);
+
+		const compactionEvents: AgentSessionEvent[] = [];
+		session.subscribe((event) => {
+			if (event.type === "auto_compaction_start" || event.type === "auto_compaction_end") {
+				compactionEvents.push(event);
+			}
+		});
+
+		session.agent.followUp({
+			role: "custom",
+			customType: "test",
+			content: [{ type: "text", text: "Queued custom" }],
+			display: false,
+			timestamp: Date.now(),
+		});
+		expect(session.agent.hasQueuedMessages()).toBe(true);
+
+		const continueSpy = vi.spyOn(session.agent, "continue").mockResolvedValue();
+
+		const runner = (session as unknown as { _extensionRunner?: { createContext: () => { compact: () => void } } })
+			._extensionRunner;
+		expect(runner).toBeDefined();
+		runner?.createContext().compact();
+
+		await vi.advanceTimersByTimeAsync(100);
+
+		expect(compactionEvents.map((event) => event.type)).toEqual(["auto_compaction_start", "auto_compaction_end"]);
+		const endEvent = compactionEvents[1];
+		expect(endEvent.type).toBe("auto_compaction_end");
+		if (endEvent.type === "auto_compaction_end") {
+			expect(endEvent.aborted).toBe(false);
+			expect(endEvent.result?.summary).toBe("compacted");
+		}
+		expect(continueSpy).toHaveBeenCalledTimes(1);
 	});
 });

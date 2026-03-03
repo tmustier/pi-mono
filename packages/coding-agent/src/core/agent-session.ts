@@ -2054,11 +2054,36 @@ export class AgentSession {
 				getContextUsage: () => this.getContextUsage(),
 				compact: (options) => {
 					void (async () => {
+						this._emit({ type: "auto_compaction_start", reason: "threshold" });
 						try {
 							const result = await this.compact(options?.customInstructions);
+							this._emit({ type: "auto_compaction_end", result, aborted: false, willRetry: false });
+
+							if (this.agent.hasQueuedMessages()) {
+								// Extension-triggered compaction can complete while steer/follow-up/custom messages
+								// are queued on the agent. Kick the loop so they are delivered.
+								setTimeout(() => {
+									this.agent.continue().catch(() => {
+										// Ignore failures here; normal prompt/queue paths will surface errors.
+									});
+								}, 100);
+							}
+
 							options?.onComplete?.(result);
 						} catch (error) {
 							const err = error instanceof Error ? error : new Error(String(error));
+							const aborted = err.message === "Compaction cancelled" || err.name === "AbortError";
+							if (aborted) {
+								this._emit({ type: "auto_compaction_end", result: undefined, aborted: true, willRetry: false });
+							} else {
+								this._emit({
+									type: "auto_compaction_end",
+									result: undefined,
+									aborted: false,
+									willRetry: false,
+									errorMessage: `Compaction failed: ${err.message}`,
+								});
+							}
 							options?.onError?.(err);
 						}
 					})();
