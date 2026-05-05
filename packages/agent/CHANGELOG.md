@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `Agent.completePendingModelTurn()` for resuming a pending provider turn from an externally delivered assistant response.
+
 ## [0.73.0] - 2026-05-04
 
 ## [0.72.1] - 2026-05-02

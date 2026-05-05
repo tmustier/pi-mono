@@ -1,6 +1,13 @@
-import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@mariozechner/pi-ai";
+import {
+	type AssistantMessage,
+	type AssistantMessageEvent,
+	EventStream,
+	getModel,
+	type Static,
+	Type,
+} from "@mariozechner/pi-ai";
 import { describe, expect, it } from "vitest";
-import { Agent } from "../src/index.js";
+import { Agent, type AgentTool } from "../src/index.js";
 
 // Mock stream that mimics AssistantMessageEventStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -433,6 +440,60 @@ describe("Agent", () => {
 		const recentMessages = agent.state.messages.slice(-4);
 		expect(recentMessages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
 		expect(responseCount).toBe(2);
+	});
+
+	it("completePendingModelTurn() should replay an assistant response and continue tool execution", async () => {
+		const echoParameters = Type.Object({ value: Type.String() });
+		type EchoParameters = Static<typeof echoParameters>;
+		let followUpCalls = 0;
+		const echoTool: AgentTool<typeof echoParameters, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo value",
+			parameters: echoParameters,
+			async execute(_toolCallId: string, params: EchoParameters) {
+				return {
+					content: [{ type: "text", text: params.value }],
+					details: { value: params.value },
+				};
+			},
+		};
+		const agent = new Agent({
+			streamFn: () => {
+				followUpCalls++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+				});
+				return stream;
+			},
+		});
+		agent.state.tools = [echoTool];
+		agent.state.messages = [
+			{
+				role: "user",
+				content: [{ type: "text", text: "Start" }],
+				timestamp: Date.now(),
+			},
+		];
+
+		const assistantMessage: AssistantMessage = {
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+			stopReason: "toolUse",
+		};
+
+		await expect(agent.completePendingModelTurn(assistantMessage)).resolves.toBeUndefined();
+
+		expect(followUpCalls).toBe(1);
+		expect(agent.state.messages.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+		expect(agent.state.messages[1]).toBe(assistantMessage);
+		const toolResult = agent.state.messages[2];
+		expect(toolResult.role).toBe("toolResult");
+		if (toolResult.role === "toolResult") {
+			expect(toolResult.content).toEqual([{ type: "text", text: "hello" }]);
+		}
+		expect(agent.state.messages[3]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "done" }] });
 	});
 
 	it("forwards sessionId to streamFn options", async () => {
