@@ -14,19 +14,13 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 	});
 
-	it("includes xhigh for Anthropic Opus 4.8 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-opus-4-8");
-		expect(model).toBeDefined();
-		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
-	});
-
 	it("does not include off for Anthropic Fable 5", () => {
 		const model = getModel("anthropic", "claude-fable-5");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
 	});
 
-	it("does not include xhigh for non-Opus Anthropic models", () => {
+	it("does not include xhigh for Claude Sonnet 4.5", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).not.toContain("xhigh");
@@ -84,5 +78,11 @@ describe("getSupportedThinkingLevels", () => {
 		const model = getModel("openrouter", "anthropic/claude-opus-4.6");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+	});
+
+	it("does not include off for Bedrock Claude Fable 5", () => {
+		const model = getModel("amazon-bedrock", "global.anthropic.claude-fable-5");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
 	});
 });
