@@ -83,6 +83,16 @@ describe("Bedrock thinking payload", () => {
 		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 	});
 
+	it("maps xhigh reasoning to effort=max for Claude Fable 5", async () => {
+		const model = getModel("amazon-bedrock", "global.anthropic.claude-fable-5");
+
+		const payload = await capturePayload(model, { reasoning: "xhigh" });
+
+		expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "max" });
+		expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
+	});
+
 	it("omits display for GovCloud model ids on non-adaptive Claude thinking", async () => {
 		const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0");
 		const model: Model<"bedrock-converse-stream"> = {

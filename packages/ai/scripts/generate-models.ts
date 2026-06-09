@@ -225,6 +225,7 @@ function isGoogleThinkingApi(model: Model<any>): boolean {
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
+		modelId.includes("claude-fable") ||
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
@@ -236,9 +237,19 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	);
 }
 
+function isAnthropicAlwaysOnThinkingModel(modelId: string): boolean {
+	return modelId.includes("claude-fable");
+}
+
 function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	const id = modelId.toLowerCase();
-	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
+	return (
+		id.includes("claude-fable") ||
+		id.includes("opus-4-7") ||
+		id.includes("opus-4.7") ||
+		id.includes("opus-4-8") ||
+		id.includes("opus-4.8")
+	);
 }
 
 function mergeAnthropicMessagesCompat(model: Model<Api>, compat: AnthropicMessagesCompat): void {
@@ -285,6 +296,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.id.includes("opus-4-6") || model.id.includes("opus-4.6")) {
 		mergeThinkingLevelMap(model, { xhigh: "max" });
+	}
+	if (isAnthropicAlwaysOnThinkingModel(model.id)) {
+		mergeThinkingLevelMap(model, { off: null, xhigh: "max" });
 	}
 	if (
 		model.id.includes("opus-4-7") ||

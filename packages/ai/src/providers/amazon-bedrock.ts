@@ -23,7 +23,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DocumentType, MetadataBearer } from "@smithy/types";
-import { calculateCost } from "../models.ts";
+import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -348,7 +348,8 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const base = buildBaseOptions(model, options, undefined);
-	if (!options?.reasoning) {
+	const clampedReasoning = clampThinkingLevel(model, options?.reasoning ?? "off");
+	if (clampedReasoning === "off") {
 		return streamBedrock(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
 
@@ -356,8 +357,8 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 		if (supportsAdaptiveThinking(model.id, model.name)) {
 			return streamBedrock(model, context, {
 				...base,
-				reasoning: options.reasoning,
-				thinkingBudgets: options.thinkingBudgets,
+				reasoning: clampedReasoning,
+				thinkingBudgets: options?.thinkingBudgets,
 			} satisfies BedrockOptions);
 		}
 
@@ -366,25 +367,25 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 		const adjusted = adjustMaxTokensForThinking(
 			base.maxTokens,
 			model.maxTokens,
-			options.reasoning,
-			options.thinkingBudgets,
+			clampedReasoning,
+			options?.thinkingBudgets,
 		);
 
 		return streamBedrock(model, context, {
 			...base,
 			maxTokens: adjusted.maxTokens,
-			reasoning: options.reasoning,
+			reasoning: clampedReasoning,
 			thinkingBudgets: {
-				...(options.thinkingBudgets || {}),
-				[clampReasoning(options.reasoning)!]: adjusted.thinkingBudget,
+				...(options?.thinkingBudgets || {}),
+				[clampReasoning(clampedReasoning)!]: adjusted.thinkingBudget,
 			},
 		} satisfies BedrockOptions);
 	}
 
 	return streamBedrock(model, context, {
 		...base,
-		reasoning: options.reasoning,
-		thinkingBudgets: options.thinkingBudgets,
+		reasoning: clampedReasoning,
+		thinkingBudgets: options?.thinkingBudgets,
 	} satisfies BedrockOptions);
 };
 
@@ -528,7 +529,12 @@ function getModelMatchCandidates(modelId: string, modelName?: string): string[] 
 function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean {
 	const candidates = getModelMatchCandidates(modelId, modelName);
 	return candidates.some(
-		(s) => s.includes("opus-4-6") || s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("sonnet-4-6"),
+		(s) =>
+			s.includes("claude-fable") ||
+			s.includes("opus-4-6") ||
+			s.includes("opus-4-7") ||
+			s.includes("opus-4-8") ||
+			s.includes("sonnet-4-6"),
 	);
 }
 
@@ -612,8 +618,8 @@ function supportsPromptCaching(model: Model<"bedrock-converse-stream">): boolean
 		if (typeof process !== "undefined" && process.env.AWS_BEDROCK_FORCE_CACHE === "1") return true;
 		return false;
 	}
-	// Claude 4.x models (opus-4, sonnet-4, haiku-4)
-	if (candidates.some((s) => s.includes("-4-"))) return true;
+	// Claude Fable and Claude 4.x models support prompt caching.
+	if (candidates.some((s) => s.includes("claude-fable") || s.includes("-4-"))) return true;
 	// Claude 3.7 Sonnet
 	if (candidates.some((s) => s.includes("claude-3-7-sonnet"))) return true;
 	// Claude 3.5 Haiku
