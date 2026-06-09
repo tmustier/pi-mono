@@ -530,7 +530,7 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 	const candidates = getModelMatchCandidates(modelId, modelName);
 	return candidates.some(
 		(s) =>
-			s.includes("claude-fable") ||
+			s.includes("claude-fable-5") ||
 			s.includes("opus-4-6") ||
 			s.includes("opus-4-7") ||
 			s.includes("opus-4-8") ||
@@ -618,8 +618,8 @@ function supportsPromptCaching(model: Model<"bedrock-converse-stream">): boolean
 		if (typeof process !== "undefined" && process.env.AWS_BEDROCK_FORCE_CACHE === "1") return true;
 		return false;
 	}
-	// Claude Fable and Claude 4.x models support prompt caching.
-	if (candidates.some((s) => s.includes("claude-fable") || s.includes("-4-"))) return true;
+	// Claude Fable 5 and Claude 4.x models support prompt caching.
+	if (candidates.some((s) => s.includes("claude-fable-5") || s.includes("-4-"))) return true;
 	// Claude 3.7 Sonnet
 	if (candidates.some((s) => s.includes("claude-3-7-sonnet"))) return true;
 	// Claude 3.5 Haiku

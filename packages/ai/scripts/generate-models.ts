@@ -223,9 +223,14 @@ function isGoogleThinkingApi(model: Model<any>): boolean {
 	return model.api === "google-generative-ai" || model.api === "google-vertex";
 }
 
+function isAnthropicFableModel(modelId: string): boolean {
+	const id = modelId.toLowerCase();
+	return id.includes("claude-fable-5") || id.includes("claude-fable-latest");
+}
+
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
-		modelId.includes("claude-fable") ||
+		isAnthropicFableModel(modelId) ||
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
@@ -238,13 +243,13 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 }
 
 function isAnthropicAlwaysOnThinkingModel(modelId: string): boolean {
-	return modelId.includes("claude-fable");
+	return isAnthropicFableModel(modelId);
 }
 
 function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 	const id = modelId.toLowerCase();
 	return (
-		id.includes("claude-fable") ||
+		isAnthropicFableModel(id) ||
 		id.includes("opus-4-7") ||
 		id.includes("opus-4.7") ||
 		id.includes("opus-4-8") ||
