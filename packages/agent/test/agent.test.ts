@@ -697,6 +697,67 @@ describe("Agent", () => {
 		expect(responseCount).toBe(2);
 	});
 
+	it("completePendingModelTurn() should replay an assistant response and continue tool execution", async () => {
+		const echoParameters = Type.Object({ value: Type.String() });
+		let followUpCalls = 0;
+		const echoTool: AgentTool<typeof echoParameters, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo value",
+			parameters: echoParameters,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: params.value }],
+					details: { value: params.value },
+				};
+			},
+		};
+		const agent = new Agent({
+			streamFn: () => {
+				followUpCalls++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+				});
+				return stream;
+			},
+		});
+		agent.state.tools = [echoTool];
+		agent.state.messages = [
+			{
+				role: "user",
+				content: [{ type: "text", text: "Start" }],
+				timestamp: Date.now(),
+			},
+		];
+
+		const assistantMessage: AssistantMessage = {
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+			stopReason: "toolUse",
+		};
+
+		await expect(agent.completePendingModelTurn(assistantMessage)).resolves.toBeUndefined();
+
+		expect(followUpCalls).toBe(1);
+		expect(agent.state.messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"assistant",
+		]);
+		expect(agent.state.messages[1]).toBe(assistantMessage);
+		const toolResult = agent.state.messages[2];
+		expect(toolResult.role).toBe("toolResult");
+		if (toolResult.role === "toolResult") {
+			expect(toolResult.content).toEqual([{ type: "text", text: "hello" }]);
+		}
+		expect(agent.state.messages[3]).toMatchObject({
+			role: "assistant",
+			content: [{ type: "text", text: "done" }],
+		});
+	});
+
 	it("keeps legacy prepareNextTurn signal callback behavior", async () => {
 		const schema = Type.Object({});
 		const tool: AgentTool<typeof schema> = {

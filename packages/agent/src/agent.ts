@@ -1,11 +1,13 @@
-import type {
-	ImageContent,
-	Message,
-	Model,
-	SimpleStreamOptions,
-	TextContent,
-	ThinkingBudgets,
-	Transport,
+import {
+	type AssistantMessage,
+	createAssistantMessageEventStream,
+	type ImageContent,
+	type Message,
+	type Model,
+	type SimpleStreamOptions,
+	type TextContent,
+	type ThinkingBudgets,
+	type Transport,
 } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
@@ -91,6 +93,28 @@ function createMutableAgentState(
 		streamingMessage: undefined,
 		pendingToolCalls: new Set<string>(),
 		errorMessage: undefined,
+	};
+}
+
+function replayAssistantMessageOnce(assistantMessage: AssistantMessage, fallback: StreamFn): StreamFn {
+	let pending: AssistantMessage | undefined = assistantMessage;
+	return (model, context, options) => {
+		if (!pending) return fallback(model, context, options);
+
+		const message = pending;
+		pending = undefined;
+		if (message.stopReason === "pending") {
+			throw new Error("Cannot complete a pending model turn with a still-pending assistant message.");
+		}
+
+		const stream = createAssistantMessageEventStream();
+		stream.push({ type: "start", partial: { ...message, content: [] } });
+		if (message.stopReason === "error" || message.stopReason === "aborted") {
+			stream.push({ type: "error", reason: message.stopReason, error: message });
+		} else {
+			stream.push({ type: "done", reason: message.stopReason, message });
+		}
+		return stream;
 	};
 }
 
@@ -385,6 +409,23 @@ export class Agent {
 		}
 
 		await this.runContinuation();
+	}
+
+	/** Complete a pending provider turn with an externally delivered assistant response. */
+	async completePendingModelTurn(assistantMessage: AssistantMessage): Promise<void> {
+		if (this.activeRun) {
+			throw new Error("Agent is already processing. Wait for completion before completing a pending model turn.");
+		}
+
+		await this.runWithLifecycle(async (signal) => {
+			await runAgentLoopContinue(
+				this.createContextSnapshot(),
+				this.createLoopConfig(),
+				(event) => this.processEvents(event),
+				signal,
+				replayAssistantMessageOnce(assistantMessage, this.streamFunction),
+			);
+		});
 	}
 
 	private normalizePromptInput(
