@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
 import markedCjkFriendly from "marked-cjk-friendly";
 import { renderLatex } from "../latex.ts";
@@ -724,7 +726,12 @@ export class Markdown implements Component {
 					if (getCapabilities().hyperlinks) {
 						// OSC 8: render as a clickable hyperlink. The URL is not printed inline,
 						// so we always show only the link text regardless of whether it matches href.
-						result += hyperlink(styledLink, token.href) + stylePrefix;
+						// Local paths need a URL scheme; leave protocol-relative URLs unchanged.
+						const href =
+							isAbsolute(token.href) && !token.href.startsWith("//")
+								? pathToFileURL(token.href).href
+								: token.href;
+						result += hyperlink(styledLink, href) + stylePrefix;
 					} else {
 						// Fallback: print URL in parentheses when text differs from href.
 						// Compare raw token.text (not styled) against href for the equality check.
